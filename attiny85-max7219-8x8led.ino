@@ -15,6 +15,7 @@
  */
 
 
+
 // Animations
 #define ANI_NONE 0
 #define ANI_RANDOM 1
@@ -91,8 +92,12 @@ unsigned long t;
 #define BUTTON_PIN 3 /* physical pin 2 */ 
 int buttonChanged;
 
-#define BUTTON_DEBOUNCE_DELAY 70
+#define BUTTON_DEBOUNCE_DELAY 40
+#define BUTTON_PRESS_SHORT_DELAY 100
+#define BUTTON_PRESS_LONG_DELAY 500
 
+
+enum buttonAction_e {None, Short, Long, Double, Hold};
 
 void setup() {
   m.init();
@@ -278,7 +283,6 @@ int valueBias0() {
 
 
 void animationCandle() {
-  // static int state = 0;
   const int offset = 2;
 
   // void setDot(byte col, byte row, byte value);
@@ -397,52 +401,104 @@ int debouceButton(int pin) {
 }
 
 
-int buttonChangedToLow() {
+enum buttonAction_e buttonCheckState() {
+  static unsigned long buttonPressedTime = 0;
+  static unsigned long buttonDepressedTime = 0;
   static int lastButtonValue = HIGH; // pin is in a pullup state
+  enum state_e{Normal, firstPress, firstDepress};
+  static enum state_e state = Normal; 
+  
+  // @NOTE enum buttonAction_e {None, Short, Long, Double, Hold};
+  static buttonAction_e buttonAction = None;
+  const int shortButtonPressDur = 100;
+  const int longButtonPressDur = 1000;
+  // @TODO double and hold times
+  
   int buttonValue = debouceButton(BUTTON_PIN);
 
-  if ((lastButtonValue == HIGH) && (buttonValue == LOW)) {
-    lastButtonValue = LOW;
-    return 1;
-  } else {
+  // @TODO check if doing "hold" would check time here, and next cond check "state == Normal"
+
+  if ( buttonValue != lastButtonValue) {
     lastButtonValue = buttonValue;
-    return 0;
-  }
-}
+    
+    switch (state) {
+      case Normal:
+        buttonPressedTime = t - BUTTON_DEBOUNCE_DELAY; // debounce only fires after BUTTON_DEBOUNCE_DELAY
+        state = firstPress;
+        return None;
+      case firstPress:
+        state = firstDepress;
+        // @TODO if implementing double-press need to wait until the double-press intra-delay has elapsed
+        // but for now change state and on next loop code in firstDepress will fire
+        return None;
+        break;
+      case firstDepress:
+        // if we're here on button change ... something's not right, but return None just in case
+        return None;
+    } // switch
+  } else {
+    // ie buttonValue == lastButtonValue
+    switch (state) {
+      case Normal:
+        // nothing to do here
+        return None;
+      case firstPress:
+        // nothing to do here
+        return None;
+      case firstDepress:
+        state = Normal; // until double-press implemented
+        // check for long press first 
+        if (t > (buttonPressedTime + longButtonPressDur)) {
+          return Long;
+        } else if (t > (buttonPressedTime + shortButtonPressDur)) {
+          return Short;
+        }
+        
+        // if haven't exceeded either time, press was too short
+        return None;
+    } // switch
+    
+  } // if else
+    
+ } // buttonCheckState()
 
 
 void loop() {
   t = millis();
-  
-  buttonChanged = buttonChangedToLow();
-  
-  if (buttonChanged == 1) {
-    c++;
-    if (c == MAX_SPRITES) c = 0;
-    // isAnimating = false;
-    printNewSprite();
-    nextAnimationChange = 0;
 
-    // check if this has an animation function
-    if (animations[c] != NULL) {
-       // set initial animation timer
-       // if (nextAnimationChange == 0) nextAnimationChange = t + animationsInt[c];
-       nextAnimationChange = t + animationsInt[c];
-    } else {
-      // nextAnimationChange = 0;
-    }
+  enum buttonAction_e buttonState = buttonCheckState();
+
+  // enum buttonAction_e {None, Short, Long, Double, Hold};
+  switch (buttonState) {
+    case Short:
+      c++;
+      if (c == MAX_SPRITES) c = 0;
+      printNewSprite();
+      nextAnimationChange = 0;
+      nextBitmapChange = 0;
+  
+      // check if this has an animation function
+      if (animations[c] != NULL) {
+         // set initial animation timer
+         nextAnimationChange = t + animationsInt[c];
+      } else {
+        // nextAnimationChange = 0;
+      }
+      break;
+    case Long:
+      // DEBUG just to try
+      m.setIntensity(15);
+      break;
   }
   
   
-  if ((t > nextBitmapChange) || (buttonChanged == 1)) {
+  if (t > nextBitmapChange) {
     // reset timer
     nextBitmapChange = t + BITMAP_CHANGE_INT;
 
     // do action
     switch ((int)currentSprite[10]) {
-      case ANI_NONE:
-        // do nothing
-        break;
+
       case ANI_RANDOM:
         printBitmapRandomLoc();
         break;
@@ -452,9 +508,8 @@ void loop() {
       case ANI_WALK:
         printBitmapRandomWalk();
         break;
+      case ANI_NONE:
       case ANI_CUSTOM:
-        // do nothing
-        break;
       default:
         // do nothing
         break;
@@ -463,7 +518,7 @@ void loop() {
   }
 
   // check if this is an animated sprite and the time has elapsed
-  if ((animations[c] != NULL) && (t > nextAnimationChange)) { // first condi was (int)currentSprite[10] == ANI_CUSTOM 
+  if ((animations[c] != NULL) && (t > nextAnimationChange)) {
     nextAnimationChange = t + animationsInt[c];
     (*animations[c])(); // call the function pointed to in the animations table
   }
