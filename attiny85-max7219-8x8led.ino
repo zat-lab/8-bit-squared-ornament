@@ -15,7 +15,7 @@
  */
 
 // @TODO add shuffle?
-enum appState_e {Normal, autoAdvance, Admin};
+enum appState_e {Normal, autoAdvance, shuffleAdvance, Admin};
 enum appState_e appState = Normal;
 
 // Animations
@@ -758,21 +758,16 @@ void autoAdvanceLoop() {
   // enum buttonAction_e {None, Short, Long, Double, Hold} buttonState;
   switch (buttonState) {
     case Short:
-      // do nothing
-      // buttonState = None;
-      break;
+      break; // do nothing
     case Long:
-      // intensity = 15 - intensity; // @DEBUG
       flashIntensity();
       
       nextAutoAdvanceChange = 0;
-      appState = Normal;
-      // buttonState = None;
+      appState = shuffleAdvance;
       return;
     default:
       break;
   } // switch
-
 
   if (t > nextAutoAdvanceChange) {
     // reset timer
@@ -783,7 +778,38 @@ void autoAdvanceLoop() {
     handleSpriteIndexChange();
   }
 
-  buttonState = None; // "swallow" any other button state so normalLoop doesn't get crazy ;)
+  // buttonState = None; // "swallow" any other button state so normalLoop doesn't get crazy ;)
+  normalLoop();
+  
+} // autoAdvanceLoop
+
+
+void shuffleAdvanceLoop() {
+  
+  // enum buttonAction_e {None, Short, Long, Double, Hold} buttonState;
+  switch (buttonState) {
+    case Short:
+      break; // do nothing
+    case Long:
+      flashIntensity();
+      
+      nextAutoAdvanceChange = 0;
+      appState = Normal;
+      return;
+    default:
+      break;
+  } // switch
+
+  if (t > nextAutoAdvanceChange) {
+    // reset timer
+    nextAutoAdvanceChange = t + AUTO_ADVANCE_CHANGE_INT;
+
+    // go to next sprite
+    c = random(0, MAX_SPRITES);
+    handleSpriteIndexChange();
+  }
+
+  // buttonState = None; // "swallow" any other button state so normalLoop doesn't get crazy ;)
   normalLoop();
   
 } // autoAdvanceLoop
@@ -801,6 +827,9 @@ void loop() {
       break;
     case autoAdvance:
       autoAdvanceLoop();      
+      break;
+    case shuffleAdvance:
+      shuffleAdvanceLoop();
       break;
     case Admin:
       // @TODO future use
