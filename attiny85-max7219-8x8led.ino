@@ -3,18 +3,17 @@
 
 /*
  * @TODO menu items
- * - random at start
- * - auto-advance
+ * (done) random [mode]
+ * (done) auto-advance
  * - auto-advance interval
- * - brightness
+ * (done) brightness
  * - walk/random interval
  * - custom animation interval
  * 
- * save settings to ee-prom
- * use long press to get to menu
+ * (no space) save settings to ee-prom
+ * (done) use very long press to get to menu
  */
 
-// @TODO add shuffle?
 enum appState_e {Normal, autoAdvance, shuffleAdvance, Admin};
 enum appState_e appState = Normal;
 
@@ -110,10 +109,11 @@ unsigned long t; // the "current" time in the loop
 int buttonChanged;
 
 #define BUTTON_DEBOUNCE_DELAY 40 /* seems to work ok */
-#define BUTTON_PRESS_SHORT_DELAY 70
-#define BUTTON_PRESS_LONG_DELAY 700
+#define BUTTON_PRESS_SHORT_DELAY 80
+#define BUTTON_PRESS_LONG_DELAY 800
+#define BUTTON_PRESS_VERY_LONG_DELAY 1600
 
-enum buttonAction_e {None, Short, Long, Double, Hold};
+enum buttonAction_e {None, Short, Long, veryLong, Double, Hold};
 enum buttonAction_e buttonState;
 
 char intensity = 2;
@@ -611,21 +611,13 @@ enum buttonAction_e buttonCheckState() {
   enum state_e {Normal, firstPress, firstDepress};
   static enum state_e state = Normal; 
   
-  // @NOTE enum buttonAction_e {None, Short, Long, Double, Hold};
+  // @NOTE enum buttonAction_e {None, Short, Long, veryLong, Double, Hold};
   // static buttonAction_e buttonAction = None;
-  const int shortButtonPressDur = 100;
-  const int longButtonPressDur = 1000;
+  // const int shortButtonPressDur = 100;
+  // const int longButtonPressDur = 1000;
   // @TODO double and hold times?
   
   int buttonValue = debouceButton(BUTTON_PIN);
-
-  /*
-  if (buttonValue == HIGH) { // @DEBUG this works as expected
-    digitalWrite(LED_PIN, HIGH);
-  } else {
-    digitalWrite(LED_PIN, LOW);
-  }
-  */
 
   // @TODO check if doing "hold" would check time here, and next cond check "state == Normal"
 
@@ -636,7 +628,6 @@ enum buttonAction_e buttonCheckState() {
       case Normal:
         buttonPressedTime = t - BUTTON_DEBOUNCE_DELAY; // debounce only fires after BUTTON_DEBOUNCE_DELAY
         state = firstPress;
-        // digitalWrite(LED_PIN, HIGH); // @DEBUG show mode change, works
         return None;
       case firstPress:
         state = firstDepress;
@@ -658,11 +649,16 @@ enum buttonAction_e buttonCheckState() {
         return None;
       case firstDepress:
         state = Normal; // until double-press implemented
-        // check for long press first 
-        if (t > (buttonPressedTime + longButtonPressDur)) {
+        // check for longest delay first 
+        if (t > (buttonPressedTime + BUTTON_PRESS_VERY_LONG_DELAY)) {
+          flashIntensity();
+          flashIntensity();
+          return veryLong;
+        }
+        if (t > (buttonPressedTime + BUTTON_PRESS_LONG_DELAY)) { // was longButtonPressDur
           flashIntensity();
           return Long;
-        } else if (t > (buttonPressedTime + shortButtonPressDur)) {
+        } else if (t > (buttonPressedTime + BUTTON_PRESS_SHORT_DELAY)) {  // was shortButtonPressDur
           return Short;
         }
         
@@ -773,12 +769,10 @@ void autoAdvanceLoop() {
     // reset timer
     nextAutoAdvanceChange = t + AUTO_ADVANCE_CHANGE_INT;
 
-    // go to next sprite
-    c++;
+    c++; // go to next sprite
     handleSpriteIndexChange();
   }
 
-  // buttonState = None; // "swallow" any other button state so normalLoop doesn't get crazy ;)
   normalLoop();
   
 } // autoAdvanceLoop
@@ -809,16 +803,55 @@ void shuffleAdvanceLoop() {
     handleSpriteIndexChange();
   }
 
-  // buttonState = None; // "swallow" any other button state so normalLoop doesn't get crazy ;)
   normalLoop();
   
 } // autoAdvanceLoop
+
+
+void adminLoop(bool adminInit) {
+  static enum appState_e oldAppState;
+  static int direction = 1;
+  
+  if (adminInit) {
+    oldAppState = appState;
+    appState = Admin;
+  }
+
+  // enum buttonAction_e {None, Short, Long, Double, Hold} buttonState;
+  switch (buttonState) {
+    case Short:
+      intensity += direction;
+      if (intensity > 15) {
+        intensity = 0;
+      } else if (intensity < 0) {
+        intensity = 15;
+      }
+      m.setIntensity(intensity);
+      break;
+    case Long:
+      direction = 0 - direction; // "reverse" it
+      break;
+    case veryLong:
+      flashIntensity();
+      flashIntensity();
+      
+      appState = oldAppState;
+      return;
+  }
+
+}
 
 
 void loop() {
   t = millis();
 
   buttonState = buttonCheckState();
+
+  if (buttonState == veryLong && appState != Admin) {
+    buttonState = None;
+    adminLoop(true);
+  }
+  
 
   // @NOTE enum appState_e {Normal, autoAdvance, Admin};
   switch (appState) {
@@ -832,7 +865,7 @@ void loop() {
       shuffleAdvanceLoop();
       break;
     case Admin:
-      // @TODO future use
+      adminLoop(false);
       break;
     default:
       appState = Normal; // @NOTE fail-safe?
