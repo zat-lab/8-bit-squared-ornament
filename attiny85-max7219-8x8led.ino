@@ -14,7 +14,7 @@
  * use long press to get to menu
  */
 
-
+enum appState_e {Normal, autoAdvance, Admin} appState;
 
 // Animations
 #define ANI_NONE 0
@@ -53,6 +53,15 @@ const unsigned char SPRITES[] PROGMEM = {
   8, 8, B00011000, B01100110, B01011010, B10100101, B10100101, B01011010, B01100110, B00011000, ANI_CUSTOM, // 13, wreath
   8, 8, B00000000, B00000000, B00000000, B00000000, B00000000, B00000000, B00000000, B00000000, ANI_CUSTOM, // 14, snow (blank)
   8, 5, B00011111, B00000100, B00011111, B00000000, B00001110, B00010001, B00010001, B00001110, ANI_CUSTOM, // 15, HO
+  8, 8, B11001100, B11101100, B01110110, B00100101, B00100101, B01110110, B11101100, B11001100, ANI_CUSTOM, // 16, gingerbread man
+  // star? tried but looks like crap
+  // elf?
+  // dove?
+  // cookie? animate bites?
+  // mitten?
+  // elf? (hat & pointy ears)
+  // easter egg: frosty melts after a long time?
+  
 };
 #define ROW_SIZE 11 /* 1 width byte, 1 bit depth byte, 8 data bytes */
 const int MAX_SPRITES = sizeof(SPRITES) / ROW_SIZE; //  - 1;
@@ -64,6 +73,10 @@ int animationsInt[MAX_SPRITES];
 const unsigned char BELL_SPRITES[] PROGMEM = {
   8, 8, B00000000, B00000110, B00111110, B11111100, B01111100, B01111100, B00111000, B00001000, // bell bottom right
   8, 8, B00001000, B00111000, B01111100, B01111100, B11111100, B00111110, B00000110, B00000000, // bell bottom left
+};
+
+const unsigned char BLANK[] PROGMEM = {
+  8, 8, B00000000, B00000000, B00000000, B00000000, B00000000, B00000000, B00000000, B00000000,
 };
 
 #define DIN 0 /* physical pin 5 */
@@ -92,12 +105,13 @@ unsigned long t;
 #define BUTTON_PIN 3 /* physical pin 2 */ 
 int buttonChanged;
 
-#define BUTTON_DEBOUNCE_DELAY 40
-#define BUTTON_PRESS_SHORT_DELAY 100
-#define BUTTON_PRESS_LONG_DELAY 500
+#define BUTTON_DEBOUNCE_DELAY 35 /* seems to work well */
+#define BUTTON_PRESS_SHORT_DELAY 70
+#define BUTTON_PRESS_LONG_DELAY 700
 
 
 enum buttonAction_e {None, Short, Long, Double, Hold};
+
 
 void setup() {
   m.init();
@@ -118,9 +132,133 @@ void setup() {
   animations[13] = &animationWreath; animationsInt[13] = 50;
   animations[14] = &animationSnow; animationsInt[14] = 300;
   animations[15] = &animationHo; animationsInt[15] = 400;
+  animations[16] = &animationGingerbreadMan; animationsInt[16] = 900;
 
   t = millis();
   printNewSprite();
+}
+
+
+// since randX, randY and randDots feed into random() they are exclusive
+// @TODO add bias control (as in towards min or max rand)? or even bias x and y? or rand value?
+void randomDots(int baseX, int randX, int baseY, int randY, int baseDots, int randDots, int value) {
+  int numDots = random(baseDots, randDots);
+
+  for (int i = 0; i < numDots; i++) {
+    m.setDot(random(baseX, randX), random(baseY, randY), value);
+  }
+}
+
+void animationGingerbreadMan() {
+  static int state = 0; // 0 pause, 1 remove random limbs (until done), then torso, 2 wait, 3 print whole, reset state
+  static char parts = 0; // 0 head, 1 right arm, 2 right leg, 3 left leg, 4 left arm, 5 torso
+  int part;
+  
+  switch (state) {
+    case 0:
+      // do nothing (pause)
+      state = 1;
+      break;
+    case 1:
+      if (parts == 0) {
+        memcpy_P(currentSprite, BLANK, 10); // copy in blank sprite just once per animation
+      }
+       // check if all random parts have been removed/checked, then do torso
+      if (parts == B00011111) {
+        part = 5;
+      } else {
+        // find part we haven't removed
+        do {
+          part = random(0, 5); // do not include torso (5)
+        } while (((parts >> part) & 1) == 1); // check if part'th bit of parts is already set to 1
+      }
+
+      // set part as removed
+      parts |= (1 << part);
+
+      // actual removal of parts in next switch
+      break;
+    case 2:
+      // do nothing (pause)
+      state = 3;
+      break;
+    case 3:
+      // reprint sprite
+      memcpy_P(currentSprite, SPRITES + ROW_SIZE * c, 10);
+      printBitmap(0, 0, currentSprite);
+      
+      // reset animation
+      state = 0;
+      parts = 0;
+      break;
+  }
+
+  if (state != 1) return; // nothing else to be done
+  
+  // remove parts
+  // @NOTE these parts come off randomly, not in order
+  switch (part) {
+    case 0: // head
+      currentSprite[0] = 4;
+      currentSprite[1] = 2;
+      printBitmap(2, 0, currentSprite);
+      
+      // crumbs
+      randomDots(1, 7, 0, 2, 1, 3, 1);
+      break;
+    case 1: // right arm
+      currentSprite[0] = 3;
+      currentSprite[1] = 2;
+      // close up torso
+      currentSprite[2 + 0] = B00000011; // row zero
+      printBitmap(5, 2, currentSprite);
+      // reset blank
+      currentSprite[2 + 0] = 0;
+      
+      // crumbs
+      randomDots(6, 8, 1, 5, 1, 3, 1);
+      break;
+    case 2: // right leg
+      currentSprite[0] = 3;
+      currentSprite[1] = 3;
+      printBitmap(5, 5, currentSprite);
+
+      // crumbs
+      randomDots(4, 8, 5, 8, 1, 5, 1);
+      break;
+    case 3: // left leg
+      currentSprite[0] = 3;
+      currentSprite[1] = 3;
+      printBitmap(0, 5, currentSprite);
+
+      // randomDots(int baseX, int randX, int baseY, int randY, int baseDots, int randDots, int value)
+      // crumbs
+      randomDots(0, 4, 5, 8, 2, 5, 1);
+      break;
+    case 4: // left arm
+      currentSprite[0] = 3;
+      currentSprite[1] = 2;
+      // close up torso
+      currentSprite[2 + 2] = B00000011; // row 2
+      printBitmap(0, 2, currentSprite);
+      // reset blank
+      currentSprite[2 + 2] = 0;
+
+      // crumbs
+      randomDots(0, 2, 1, 5, 1, 3, 1);
+      break;
+    case 5: // torso
+      currentSprite[0] = 4;
+      currentSprite[1] = 4;
+      printBitmap(2, 2, currentSprite);
+
+      // crumbs
+      randomDots(1, 7, 1, 7, 2, 6, 1);
+      break;
+    }
+
+    // check if newParts have all parts checked, then update state
+    if (parts == B00111111) state = 2;
 }
 
 
@@ -128,10 +266,10 @@ void animationHo() {
   static int state = 0;
 
   switch (state) {
-    case 0: // and 1
+    case 0: // and 1 default
       m.clear(); // initial clear
-    case 3: // and 4
-    case 6: //  and 7
+    case 3: // and 4 default
+    case 6: //  and 7 default
       printBitmapRandomLoc(false);
       break;
     case 2:
@@ -152,7 +290,8 @@ void animationHo() {
 
 void animationBell() {
   static int state = 0;
-
+  // @TODO this needs to check if initial state because it'll have ho printed... I think?
+  
   // using "10" instead of ROW_SIZE because don't want to lose last byte
   // update current sprite buffer from various PROGMEM
   switch (state) {
@@ -405,7 +544,7 @@ enum buttonAction_e buttonCheckState() {
   static unsigned long buttonPressedTime = 0;
   static unsigned long buttonDepressedTime = 0;
   static int lastButtonValue = HIGH; // pin is in a pullup state
-  enum state_e{Normal, firstPress, firstDepress};
+  enum state_e {Normal, firstPress, firstDepress};
   static enum state_e state = Normal; 
   
   // @NOTE enum buttonAction_e {None, Short, Long, Double, Hold};
@@ -465,6 +604,8 @@ enum buttonAction_e buttonCheckState() {
 
 void loop() {
   t = millis();
+
+  // @NOTE enum appState_e {Normal, autoAdvance, Admin} appState;
 
   enum buttonAction_e buttonState = buttonCheckState();
 
