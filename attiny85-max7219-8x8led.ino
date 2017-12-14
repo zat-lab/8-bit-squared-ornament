@@ -14,7 +14,9 @@
  * use long press to get to menu
  */
 
-enum appState_e {Normal, autoAdvance, Admin} appState;
+// @TODO add shuffle?
+enum appState_e {Normal, autoAdvance, Admin};
+enum appState_e appState = Normal;
 
 // Animations
 #define ANI_NONE 0
@@ -29,12 +31,11 @@ enum appState_e {Normal, autoAdvance, Admin} appState;
  * 0: x-width
  * 1: y-width
  * 2-9: bitmap
- * 10: animations - see above
- * 
+ *    bytes are in columns
+ *    bits are bottom to top in each byte
+ *    for less and 8 tall, shift right (ie design sprite at top)
+ * 10: animation mode - see above
  */
-// bytes are in columns
-// bits are bottom to top in each byte
-// for less and 8 tall, shift right (ie design sprite at top)
 const unsigned char SPRITES[] PROGMEM = {
   5, 8, B11111010, B10011101, B11111110, B10011101, B11111010, B00000000, B00000000, B00000000, ANI_WALK, // 0, present
   6, 7, B00011000, B00111100, B01111011, B01111011, B00111100, B00011000, B00000000, B00000000, ANI_RANDOM, // 1, ornament
@@ -57,16 +58,16 @@ const unsigned char SPRITES[] PROGMEM = {
   // star? tried but looks like crap
   // elf?
   // dove?
-  // cookie? animate bites?
+  // cookie? animate bites (like gingerbread man)?
   // mitten?
   // elf? (hat & pointy ears)
   // easter egg: frosty melts after a long time?
   
 };
 #define ROW_SIZE 11 /* 1 width byte, 1 bit depth byte, 8 data bytes */
-const int MAX_SPRITES = sizeof(SPRITES) / ROW_SIZE; //  - 1;
+const int MAX_SPRITES = sizeof(SPRITES) / ROW_SIZE;
 
-void (*animations[MAX_SPRITES]) (); // animation function pointer array (no params)
+void (*animations[MAX_SPRITES]) (bool newAnimation); // animation function pointer array
 
 int animationsInt[MAX_SPRITES];
 
@@ -85,39 +86,48 @@ const unsigned char BLANK[] PROGMEM = {
 
 #define MAXS 1 /* number of displays */
 
-MaxMatrix m(DIN, CS, CLK, MAXS); // define Library
+MaxMatrix m(DIN, CS, CLK, MAXS); // set matrix lib
 
-// #define CURRENT_SPRITE_SIZE 10 // this didn't work as expected
 unsigned char currentSprite[ROW_SIZE]; // temp space between "progmem" and the library
 
+// @TODO is ATTINY85 timing off? seconds don't seem right
 unsigned long nextBitmapChange = 0;
-#define BITMAP_CHANGE_INT 1000 /* is ATTINY85 timing off? */
+#define BITMAP_CHANGE_INT 1000
 unsigned long nextAnimationChange = 0;
+// bool newAnimation;
 
-unsigned char c = 0;
+#define AUTO_ADVANCE_CHANGE_INT 9000
+unsigned long nextAutoAdvanceChange = 0;
+
+unsigned char c = 0;  // @TODO this should be renamed
 
 int spriteX = 0;
 int spriteY = 0;
 
-unsigned long t;
-// unsigned long animation_t;
+unsigned long t; // the "current" time in the loop
 
 #define BUTTON_PIN 3 /* physical pin 2 */ 
 int buttonChanged;
 
-#define BUTTON_DEBOUNCE_DELAY 35 /* seems to work well */
+#define BUTTON_DEBOUNCE_DELAY 40 /* seems to work ok */
 #define BUTTON_PRESS_SHORT_DELAY 70
 #define BUTTON_PRESS_LONG_DELAY 700
 
-
 enum buttonAction_e {None, Short, Long, Double, Hold};
+enum buttonAction_e buttonState;
 
+char intensity = 2;
+
+// #define LED_PIN 4 /* physical pin 3 @DEBUG */ 
 
 void setup() {
   m.init();
-  m.setIntensity(1);  // LED Intensity 0-15, was 2
+  m.setIntensity(intensity);  // LED Intensity 0-15, 0 dimest, 15 brightest
   
   pinMode(BUTTON_PIN, INPUT_PULLUP);
+
+  // pinMode(LED_PIN, OUTPUT); // @DEBUG
+  // digitalWrite(LED_PIN, LOW); // @DEBUG
 
   // clear animations table
   for (int i = 0; i < MAX_SPRITES; i++) {
@@ -149,10 +159,18 @@ void randomDots(int baseX, int randX, int baseY, int randY, int baseDots, int ra
   }
 }
 
-void animationGingerbreadMan() {
-  static int state = 0; // 0 pause, 1 remove random limbs (until done), then torso, 2 wait, 3 print whole, reset state
-  static char parts = 0; // 0 head, 1 right arm, 2 right leg, 3 left leg, 4 left arm, 5 torso
+
+void animationGingerbreadMan(bool newAnimation) {
+  static int state; // 0 pause, 1 remove random limbs (until done), then torso, 2 wait, 3 print whole, reset state
+  static char parts; // 0 head, 1 right arm, 2 right leg, 3 left leg, 4 left arm, 5 torso
   int part;
+
+  if (newAnimation) {
+    state = 0;
+    parts = 0;
+    memcpy_P(currentSprite, BLANK, 10); // copy in blank sprite just once per animation
+    return;
+  }
   
   switch (state) {
     case 0:
@@ -160,9 +178,6 @@ void animationGingerbreadMan() {
       state = 1;
       break;
     case 1:
-      if (parts == 0) {
-        memcpy_P(currentSprite, BLANK, 10); // copy in blank sprite just once per animation
-      }
        // check if all random parts have been removed/checked, then do torso
       if (parts == B00011111) {
         part = 5;
@@ -173,7 +188,7 @@ void animationGingerbreadMan() {
         } while (((parts >> part) & 1) == 1); // check if part'th bit of parts is already set to 1
       }
 
-      // set part as removed
+      // set part bit as removed
       parts |= (1 << part);
 
       // actual removal of parts in next switch
@@ -195,7 +210,7 @@ void animationGingerbreadMan() {
 
   if (state != 1) return; // nothing else to be done
   
-  // remove parts
+  // ie state == 1, so remove parts
   // @NOTE these parts come off randomly, not in order
   switch (part) {
     case 0: // head
@@ -231,7 +246,6 @@ void animationGingerbreadMan() {
       currentSprite[1] = 3;
       printBitmap(0, 5, currentSprite);
 
-      // randomDots(int baseX, int randX, int baseY, int randY, int baseDots, int randDots, int value)
       // crumbs
       randomDots(0, 4, 5, 8, 2, 5, 1);
       break;
@@ -255,83 +269,114 @@ void animationGingerbreadMan() {
       // crumbs
       randomDots(1, 7, 1, 7, 2, 6, 1);
       break;
-    }
+  } // switch
 
-    // check if newParts have all parts checked, then update state
-    if (parts == B00111111) state = 2;
+  // check if newParts have all parts checked, then update state
+  if (parts == B00111111) state = 2;
 }
 
 
-void animationHo() {
-  static int state = 0;
+void animationHo(bool newAnimation) {
+  static int state;
+
+  if (newAnimation) {
+    state = 0;
+    return;
+  }
 
   switch (state) {
-    case 0: // and 1 default
-      m.clear(); // initial clear
-    case 3: // and 4 default
-    case 6: //  and 7 default
-      printBitmapRandomLoc(false);
-      break;
+    // initial is with 1st HO at a random spot, and 1 pause
+    case 0:
+      break; // pause
     case 2:
+      m.clear(); // clear 1st
+      break;
+    case 3:
+      printBitmapRandomLoc(false); // print 2nd HO
+      break;
+    case 4:
+      break; // pause
     case 5:
+      m.clear(); // clear 2nd
+      break;
+    case 6:
+      printBitmapRandomLoc(false); // print 3rd HO
+      break;
+    case 7:
+      break;  // pause
     case 8:
-      m.clear();
+      m.clear(); // clear 3rd
       break;
     case 9:
     case 10:
-      // do nothing (a break)
+      break;  // pause 2x
+    case 11:
+      printBitmapRandomLoc(false); // print 1st HO
       break;
   }
 
   state++;
-  if (state > 10) state = 0;
+  if (state > 11) state = 0;
 }
 
 
-void animationBell() {
-  static int state = 0;
-  // @TODO this needs to check if initial state because it'll have ho printed... I think?
+void animationBell(bool newAnimation) {
+  static int state;
+
+  if (newAnimation) {
+    state = 0;
+    return;
+  }
   
   // using "10" instead of ROW_SIZE because don't want to lose last byte
   // update current sprite buffer from various PROGMEM
   switch (state) {
-    case 0:
-    case 2:
+    case 1:
       memcpy_P(currentSprite, SPRITES + ROW_SIZE * c, 10);
       break;
-    case 1:
+    case 0:
       memcpy_P(currentSprite, BELL_SPRITES + 10 * 0, 10);
       break;
-    case 3:
+    case 2:
       memcpy_P(currentSprite, BELL_SPRITES + 10 * 1, 10);
       break;
   }
 
-  // printBitmap(int x, int y, const unsigned char* b)
   printBitmap(spriteX, spriteY, currentSprite);
   
   state++;
-  if (state > 3) state = 0;
+  if (state > 2) state = 0;
 }
 
 
-void animationSnow() {
-  // @TODO occasionally go left or right
+void animationSnow(bool newAnimation) {
+  if (newAnimation) return;
+
+  /* @NOTE works but the effect is jaring
+  int x = random(0, 9);
+  switch (x) {
+    case 0:
+      m.shiftLeft(true); // rotate - probably won't notice
+      break;
+    case 1:
+      m.shiftRight(true); // rotate - probably won't notice 
+      break;
+    default:
+      break;
+  }
+  */
   
   // snow fall
   m.shiftDown(false);
-
-  int r = random(1, random(5, 10));
-  // new snow
-  for (int i = 0; i < r; i++ ) {
-    m.setDot(random(0,8), 0, 1);
-  }
+  randomDots(0, 8, 0, 1, 1, random(5, 10), 1);
 }
 
 
-void animationWreath() {
+void animationWreath(bool newAnimation) {
   int tempX;
   int tempY;
+
+  if (newAnimation) return;
 
   for (int i = 0; i < 5; i++ ) {
     tempX = random(1, 4);
@@ -361,11 +406,19 @@ void animationWreath() {
 }
 
 
-void animationTree() {
-  static int state = 0;
+void animationTree(bool newAnimation) {
+  static int state;
   const int interval = 4;
   int tempX;
   int tempY;
+
+  if (newAnimation) {
+    state = 0;
+    memcpy_P(currentSprite, BLANK, 10); // copy in blank sprite just once per animation
+    currentSprite[0] = 2;
+    currentSprite[1] = 2;
+    return;
+  }
 
   // blink the tree lights
   for (int i = 0; i < 5; i++) {
@@ -381,16 +434,13 @@ void animationTree() {
   // flicker the star
   if ((state % interval) == 0) {
     if ((state % (interval * 2)) == 0) {
-      m.setDot(3, 0, 1);
-      m.setDot(3, 1, 0);
-      m.setDot(4, 0, 0);
-      m.setDot(4, 1, 1);
+      currentSprite[2 + 0] = B00000010; // row 0
+      currentSprite[2 + 1] = B00000001; // row 1
     } else {
-      m.setDot(3, 0, 0);
-      m.setDot(3, 1, 1);
-      m.setDot(4, 0, 1);
-      m.setDot(4, 1, 0);
+      currentSprite[2 + 0] = B00000001; // row 0
+      currentSprite[2 + 1] = B00000010; // row 1
     }
+    printBitmap(3, 0, currentSprite);
   }
 
   state++;
@@ -398,14 +448,27 @@ void animationTree() {
 }
 
 
-void animationRudolph() {
-  static int state = 0;
-  
-  // void setDot(byte col, byte row, byte value);
-  m.setDot(3, 6, state);
-  m.setDot(3, 7, state);
-  m.setDot(4, 6, state);
-  m.setDot(4, 7, state);
+void animationRudolph(bool newAnimation) {
+  static int state;
+
+  if (newAnimation) {
+    memcpy_P(currentSprite, BLANK, 10); // copy in blank sprite just once per animation;
+    currentSprite[0] = 2;
+    currentSprite[1] = 2;
+    state = 0;
+    return;
+  }
+
+  // @TODO decrease off time - use state
+
+  if (state % 2) {
+    currentSprite[2 + 0] = B00000011; // row 0
+    currentSprite[2 + 1] = B00000011; // row 1
+  } else {
+    currentSprite[2 + 0] = B00000000; // row 0
+    currentSprite[2 + 1] = B00000000; // row 1
+  }
+  printBitmap(3, 6, currentSprite);
 
   state = 1 - state; // toggles between 0 and 1
 }
@@ -421,10 +484,12 @@ int valueBias0() {
 }
 
 
-void animationCandle() {
-  const int offset = 2;
+void animationCandle(bool newAnimation) {
+  const int offset = 2; // position of candle
+  
+  if (newAnimation) return;
 
-  // void setDot(byte col, byte row, byte value);
+  // leave as is because timing adds to effect?
   m.setDot(spriteX + offset + 1, 0, valueBias1());
   m.setDot(spriteX + offset + 0, 1, valueBias1());
   m.setDot(spriteX + offset + 1, 1, valueBias1());
@@ -439,7 +504,7 @@ void printNewSprite() {
   // update current sprite buffer from PROGMEM
   memcpy_P(currentSprite, SPRITES + ROW_SIZE * c, ROW_SIZE);
   
-  // verify size and sprite x & y fit!
+  // verify size + sprite x & y fit!
   if ((currentSprite[0] + spriteX) > 8) spriteX = 0;
   if ((currentSprite[1] + spriteY) > 8) spriteY = 0;
   
@@ -450,7 +515,6 @@ void printNewSprite() {
 
 
 void printBitmap(int x, int y, const unsigned char* b) {
-  // m.writeSprite(int x, int y, const byte* sprite)
   m.writeSprite(x, y, b);
 }
 
@@ -460,9 +524,9 @@ void printBitmapRandomWalkReq() {
   int tempY;
   
   do {
-    // shortcut to 0 if size is 8
-    tempX = currentSprite[0] == 8 ? 0 : spriteX + random(0, 3) - 1; // yeilds -1, 0, 1
-    tempY = currentSprite[1] == 8 ? 0 : spriteY + random(0, 3) - 1; // yeilds -1, 0, 1
+    // shortcut to 0 if size is 8 with ternary
+    tempX = currentSprite[0] == 8 ? 0 : spriteX + random(0, 3) - 1; // randon yeilds -1, 0, 1
+    tempY = currentSprite[1] == 8 ? 0 : spriteY + random(0, 3) - 1; // random yeilds -1, 0, 1
   } while ((tempX == spriteX && tempY == spriteY) ||
           tempX < 0 ||
           tempY < 0 ||
@@ -480,8 +544,8 @@ void printBitmapRandomWalkReq() {
 
 
 void printBitmapRandomWalk() {
-  int tempX = spriteX + random(0, 3) - 1; // yeilds -1, 0, 1
-  int tempY = spriteY + random(0, 3) - 1;
+  int tempX = spriteX + random(0, 3) - 1; // random yeilds -1, 0, 1
+  int tempY = spriteY + random(0, 3) - 1; // random yeilds -1, 0, 1
 
   if (tempX < 0) tempX = 0;
   else if ((tempX + currentSprite[0]) > 8 ) tempX = 8 - currentSprite[0];
@@ -548,29 +612,37 @@ enum buttonAction_e buttonCheckState() {
   static enum state_e state = Normal; 
   
   // @NOTE enum buttonAction_e {None, Short, Long, Double, Hold};
-  static buttonAction_e buttonAction = None;
+  // static buttonAction_e buttonAction = None;
   const int shortButtonPressDur = 100;
   const int longButtonPressDur = 1000;
-  // @TODO double and hold times
+  // @TODO double and hold times?
   
   int buttonValue = debouceButton(BUTTON_PIN);
 
+  /*
+  if (buttonValue == HIGH) { // @DEBUG this works as expected
+    digitalWrite(LED_PIN, HIGH);
+  } else {
+    digitalWrite(LED_PIN, LOW);
+  }
+  */
+
   // @TODO check if doing "hold" would check time here, and next cond check "state == Normal"
 
-  if ( buttonValue != lastButtonValue) {
+  if (buttonValue != lastButtonValue) {
     lastButtonValue = buttonValue;
     
     switch (state) {
       case Normal:
         buttonPressedTime = t - BUTTON_DEBOUNCE_DELAY; // debounce only fires after BUTTON_DEBOUNCE_DELAY
         state = firstPress;
+        // digitalWrite(LED_PIN, HIGH); // @DEBUG show mode change, works
         return None;
       case firstPress:
         state = firstDepress;
         // @TODO if implementing double-press need to wait until the double-press intra-delay has elapsed
         // but for now change state and on next loop code in firstDepress will fire
         return None;
-        break;
       case firstDepress:
         // if we're here on button change ... something's not right, but return None just in case
         return None;
@@ -588,6 +660,7 @@ enum buttonAction_e buttonCheckState() {
         state = Normal; // until double-press implemented
         // check for long press first 
         if (t > (buttonPressedTime + longButtonPressDur)) {
+          flashIntensity();
           return Long;
         } else if (t > (buttonPressedTime + shortButtonPressDur)) {
           return Short;
@@ -599,38 +672,53 @@ enum buttonAction_e buttonCheckState() {
     
   } // if else
     
- } // buttonCheckState()
+} // buttonCheckState()
 
 
-void loop() {
-  t = millis();
+void handleSpriteIndexChange() {
+  if (c == MAX_SPRITES) c = 0;
+    printNewSprite();
+    nextAnimationChange = 0;
+    nextBitmapChange = 0;
 
-  // @NOTE enum appState_e {Normal, autoAdvance, Admin} appState;
+    // check if this has an animation function
+    if (animations[c] != NULL) {
+       // set initial animation timer
+       (*animations[c])(true); // call animation function as "new" to setup
+       nextAnimationChange = t + animationsInt[c];
+    }
+}
 
-  enum buttonAction_e buttonState = buttonCheckState();
 
-  // enum buttonAction_e {None, Short, Long, Double, Hold};
-  switch (buttonState) {
-    case Short:
-      c++;
-      if (c == MAX_SPRITES) c = 0;
-      printNewSprite();
-      nextAnimationChange = 0;
-      nextBitmapChange = 0;
-  
-      // check if this has an animation function
-      if (animations[c] != NULL) {
-         // set initial animation timer
-         nextAnimationChange = t + animationsInt[c];
-      } else {
-        // nextAnimationChange = 0;
-      }
-      break;
-    case Long:
-      // DEBUG just to try
-      m.setIntensity(15);
-      break;
-  }
+void flashIntensity() {
+  // @TODO these delays probably not a good idea... mostly a @DEBUG idea
+  m.setIntensity(0);
+  delay(20);
+  m.setIntensity(15);
+  delay(20);
+  m.setIntensity(intensity);
+}
+
+
+void normalLoop() {
+
+  if (appState == Normal) {
+    // enum buttonAction_e {None, Short, Long, Double, Hold} buttonState;
+    switch (buttonState) {
+      case Short:
+        c++;
+        handleSpriteIndexChange();
+        break;
+      case Long:
+        flashIntensity();
+        
+        appState = autoAdvance;
+        nextAutoAdvanceChange = t + AUTO_ADVANCE_CHANGE_INT;
+        return;
+      default:
+        break; // fail-safe?
+    } // switch
+  } // if
   
   
   if (t > nextBitmapChange) {
@@ -639,7 +727,6 @@ void loop() {
 
     // do action
     switch ((int)currentSprite[10]) {
-
       case ANI_RANDOM:
         printBitmapRandomLoc();
         break;
@@ -652,16 +739,75 @@ void loop() {
       case ANI_NONE:
       case ANI_CUSTOM:
       default:
-        // do nothing
-        break;
+        break; // do nothing
     }
     
-  }
+  } // if
 
   // check if this is an animated sprite and the time has elapsed
   if ((animations[c] != NULL) && (t > nextAnimationChange)) {
     nextAnimationChange = t + animationsInt[c];
-    (*animations[c])(); // call the function pointed to in the animations table
+    (*animations[c])(false); // call the function pointed to in the animations table
+  }
+  
+} // normalLoop
+
+
+void autoAdvanceLoop() {
+  
+  // enum buttonAction_e {None, Short, Long, Double, Hold} buttonState;
+  switch (buttonState) {
+    case Short:
+      // do nothing
+      // buttonState = None;
+      break;
+    case Long:
+      // intensity = 15 - intensity; // @DEBUG
+      flashIntensity();
+      
+      nextAutoAdvanceChange = 0;
+      appState = Normal;
+      // buttonState = None;
+      return;
+    default:
+      break;
+  } // switch
+
+
+  if (t > nextAutoAdvanceChange) {
+    // reset timer
+    nextAutoAdvanceChange = t + AUTO_ADVANCE_CHANGE_INT;
+
+    // go to next sprite
+    c++;
+    handleSpriteIndexChange();
+  }
+
+  buttonState = None; // "swallow" any other button state so normalLoop doesn't get crazy ;)
+  normalLoop();
+  
+} // autoAdvanceLoop
+
+
+void loop() {
+  t = millis();
+
+  buttonState = buttonCheckState();
+
+  // @NOTE enum appState_e {Normal, autoAdvance, Admin};
+  switch (appState) {
+    case Normal:
+      normalLoop();
+      break;
+    case autoAdvance:
+      autoAdvanceLoop();      
+      break;
+    case Admin:
+      // @TODO future use
+      break;
+    default:
+      appState = Normal; // @NOTE fail-safe?
+      break;
   }
   
   delay(1);
