@@ -2,7 +2,7 @@
 #include "main.h"
 
 /*
- * @TODO menu items
+ * @TODO menu items - probably not enough storage space to do these
  * (done) random [mode]
  * (done) auto-advance
  * - auto-advance interval
@@ -327,15 +327,18 @@ void animationBell(bool newAnimation) {
     state = 0;
     return;
   }
+
+  // @TODO animation fixed, check
   
   // using "10" instead of ROW_SIZE because don't want to lose last byte
   // update current sprite buffer from various PROGMEM
   switch (state) {
-    case 1:
-      memcpy_P(currentSprite, SPRITES + ROW_SIZE * c, 10);
-      break;
     case 0:
       memcpy_P(currentSprite, BELL_SPRITES + 10 * 0, 10);
+      break;
+    case 1:
+    case 3:
+      memcpy_P(currentSprite, SPRITES + ROW_SIZE * c, 10);
       break;
     case 2:
       memcpy_P(currentSprite, BELL_SPRITES + 10 * 1, 10);
@@ -345,7 +348,7 @@ void animationBell(bool newAnimation) {
   printBitmap(spriteX, spriteY, currentSprite);
   
   state++;
-  if (state > 2) state = 0;
+  if (state > 3) state = 0;
 }
 
 
@@ -612,9 +615,6 @@ enum buttonAction_e buttonCheckState() {
   static enum state_e state = Normal; 
   
   // @NOTE enum buttonAction_e {None, Short, Long, veryLong, Double, Hold};
-  // static buttonAction_e buttonAction = None;
-  // const int shortButtonPressDur = 100;
-  // const int longButtonPressDur = 1000;
   // @TODO double and hold times?
   
   int buttonValue = debouceButton(BUTTON_PIN);
@@ -687,7 +687,7 @@ void handleSpriteIndexChange() {
 
 
 void flashIntensity() {
-  // @TODO these delays probably not a good idea... mostly a @DEBUG idea
+  // @TODO these delays probably not a good idea... mostly a @DEBUG idea, but it works as for UX
   m.setIntensity(0);
   delay(20);
   m.setIntensity(15);
@@ -699,7 +699,7 @@ void flashIntensity() {
 void normalLoop() {
 
   if (appState == Normal) {
-    // enum buttonAction_e {None, Short, Long, Double, Hold} buttonState;
+    // enum buttonAction_e {None, Short, Long, veryLong, Double, Hold} buttonState;
     switch (buttonState) {
       case Short:
         c++;
@@ -751,7 +751,7 @@ void normalLoop() {
 
 void autoAdvanceLoop() {
   
-  // enum buttonAction_e {None, Short, Long, Double, Hold} buttonState;
+  // enum buttonAction_e {None, Short, Long, , veryLong, Double, Hold} buttonState;
   switch (buttonState) {
     case Short:
       break; // do nothing
@@ -780,7 +780,7 @@ void autoAdvanceLoop() {
 
 void shuffleAdvanceLoop() {
   
-  // enum buttonAction_e {None, Short, Long, Double, Hold} buttonState;
+  // enum buttonAction_e {None, Short, Long, veryLong, Double, Hold} buttonState;
   switch (buttonState) {
     case Short:
       break; // do nothing
@@ -817,7 +817,7 @@ void adminLoop(bool adminInit) {
     appState = Admin;
   }
 
-  // enum buttonAction_e {None, Short, Long, Double, Hold} buttonState;
+  // enum buttonAction_e {None, Short, Long, veryLong, Double, Hold} buttonState;
   switch (buttonState) {
     case Short:
       intensity += direction;
